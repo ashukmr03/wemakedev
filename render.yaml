@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: carecircle-api
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.0
+      - key: S3_BUCKET
+        value: carecircle-data
+      - key: AWS_REGION
+        value: us-east-1
+      - key: FRONTEND_URL
+        value: http://localhost:3000
+      - key: USE_LAMBDA_AI
+        value: "false"
