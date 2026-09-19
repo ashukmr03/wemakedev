@@ -1,8 +1,11 @@
 import logging
+import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api import (
@@ -35,7 +38,6 @@ async def lifespan(app: FastAPI):
     """Lifespan context manager to automatically seed demo data on startup if storage is empty."""
     logger.info("Initializing CareCircle API...")
     try:
-        # Check if demo family exists, if not run seed
         existing_family = s3_service.get_json("families/demo-family.json")
         if not existing_family:
             logger.info("No existing demo data found. Seeding initial Rao Family data...")
@@ -50,7 +52,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="CareCircle API",
-    description="Mobile-first eldercare coordination API backend for families.",
+    description="Mobile-first eldercare coordination API backend & frontend host for families.",
     version="1.0.0",
     docs_url="/docs",
     openapi_url="/openapi.json",
@@ -58,7 +60,7 @@ app = FastAPI(
 )
 
 # CORS Configuration
-origins = ["http://localhost:3000"]
+origins = ["http://localhost:3000", "http://localhost:8000", "http://127.0.0.1:3000", "http://127.0.0.1:8000"]
 if settings.FRONTEND_URL and settings.FRONTEND_URL not in origins:
     origins.append(settings.FRONTEND_URL)
 
@@ -89,14 +91,22 @@ async def request_logging_and_id_middleware(request: Request, call_next):
 # Global Exception Handlers
 @app.exception_handler(StarletteHTTPException)
 async def http_exception_handler(request: Request, exc: StarletteHTTPException):
-    req_id = getattr(request.state, "request_id", generate_uuid())
-    logger.error(f"[{req_id}] HTTP Exception {exc.status_code}: {exc.detail}")
-    return make_error_response(
-        message=str(exc.detail),
-        code=f"HTTP_{exc.status_code}",
-        request_id=req_id,
-        status_code=exc.status_code
-    )
+    # Check if request is for API
+    if request.url.path.startswith("/api") or request.url.path == "/health":
+        req_id = getattr(request.state, "request_id", generate_uuid())
+        logger.error(f"[{req_id}] HTTP Exception {exc.status_code}: {exc.detail}")
+        return make_error_response(
+            message=str(exc.detail),
+            code=f"HTTP_{exc.status_code}",
+            request_id=req_id,
+            status_code=exc.status_code
+        )
+    # Serve index.html for SPA client-side routing if frontend exists
+    frontend_dist = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "dist", "public"))
+    index_file = os.path.join(frontend_dist, "index.html")
+    if os.path.exists(index_file):
+        return FileResponse(index_file)
+    return make_error_response(message=str(exc.detail), code=f"HTTP_{exc.status_code}", status_code=exc.status_code)
 
 
 @app.exception_handler(RequestValidationError)
@@ -133,3 +143,9 @@ app.include_router(tasks.router)
 app.include_router(appointments.router)
 app.include_router(notifications.router)
 app.include_router(family.router)
+
+# Mount Static Frontend Bundle if available
+frontend_dist = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "dist", "public"))
+assets_dir = os.path.join(frontend_dist, "assets")
+if os.path.exists(assets_dir):
+    app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
