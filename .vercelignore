@@ -1,0 +1,5 @@
+# Ignore backend code so Vercel treats this repository strictly as a static Vite React app
+app/
+lambda_functions/
+requirements.txt
+render.yaml
