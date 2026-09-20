@@ -9,6 +9,17 @@ from app.config import settings
 logger = logging.getLogger("carecircle.s3")
 
 
+def _has_valid_aws_credentials() -> bool:
+    """Return True only when explicit AWS credentials are configured.
+
+    boto3 silently falls back to environment variables, IAM roles, and
+    instance metadata — but in a local dev environment those are almost
+    never valid.  Requiring explicit credentials avoids ~2-second network
+    timeouts on every S3 call and prevents misleading error logs.
+    """
+    return bool(settings.AWS_ACCESS_KEY_ID and settings.AWS_SECRET_ACCESS_KEY)
+
+
 class S3Service:
     """S3 Persistence Layer with graceful in-memory fallback for offline/demo reliability."""
 
@@ -18,31 +29,53 @@ class S3Service:
         self.client = None
         self._memory_store: Dict[str, Any] = {}
 
-        # Attempt to initialize boto3 S3 client if credentials exist
-        try:
-            kwargs = {"region_name": settings.AWS_REGION}
-            if settings.AWS_ACCESS_KEY_ID and settings.AWS_SECRET_ACCESS_KEY:
-                kwargs["aws_access_key_id"] = settings.AWS_ACCESS_KEY_ID
-                kwargs["aws_secret_access_key"] = settings.AWS_SECRET_ACCESS_KEY
+        if not _has_valid_aws_credentials():
+            logger.info(
+                "No explicit AWS credentials configured. "
+                "S3 persistence disabled — using in-memory store. "
+                "Set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in .env to enable S3."
+            )
+            return
 
-            self.client = boto3.client("s3", **kwargs)
-            # Test connectivity lightly or mark enabled
+        try:
+            self.client = boto3.client(
+                "s3",
+                region_name=settings.AWS_REGION,
+                aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
+                aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
+            )
+            # Verify the bucket is reachable before enabling S3 mode.
+            self.client.head_bucket(Bucket=self.bucket)
             self.use_s3 = True
-            logger.info(f"Initialized boto3 S3 client for bucket: {self.bucket}")
-        except Exception as e:
-            logger.warning(f"S3 client initialization failed or unconfigured: {e}. Falling back to in-memory store.")
-            self.use_s3 = False
+            logger.info(f"S3 connected — bucket: {self.bucket}")
+        except ClientError as e:
+            error_code = e.response.get("Error", {}).get("Code", "")
+            if error_code == "404":
+                logger.warning(
+                    f"S3 bucket '{self.bucket}' not found. "
+                    "Falling back to in-memory store."
+                )
+            else:
+                logger.warning(
+                    f"S3 bucket check failed ({error_code}). Falling back to in-memory store."
+                )
+            self.client = None
+        except (BotoCoreError, Exception) as e:
+            logger.warning(f"S3 initialization failed: {e}. Falling back to in-memory store.")
+            self.client = None
+
+    # ------------------------------------------------------------------
+    # CRUD operations
+    # ------------------------------------------------------------------
 
     def put_json(self, key: str, data: Any) -> bool:
         """Store JSON object under key in S3 (or memory fallback)."""
-        # Always update memory cache first
         self._memory_store[key] = data
 
         if not self.use_s3 or not self.client:
             return True
 
         try:
-            logger.info(f"S3 PUT key: {key}")
             body = json.dumps(data, indent=2, ensure_ascii=False)
             self.client.put_object(
                 Bucket=self.bucket,
@@ -52,14 +85,13 @@ class S3Service:
             )
             return True
         except (ClientError, BotoCoreError, Exception) as e:
-            logger.error(f"S3 put_json failed for {key}: {e}. Retaining in memory store.")
+            logger.error(f"S3 put_json failed for {key}: {e}. Data retained in memory.")
             return True
 
     def get_json(self, key: str) -> Optional[Any]:
         """Fetch JSON object by key from S3 (or memory fallback)."""
         if self.use_s3 and self.client:
             try:
-                logger.info(f"S3 GET key: {key}")
                 response = self.client.get_object(Bucket=self.bucket, Key=key)
                 content = response["Body"].read().decode("utf-8")
                 parsed = json.loads(content)
@@ -68,7 +100,6 @@ class S3Service:
             except ClientError as e:
                 error_code = e.response.get("Error", {}).get("Code", "")
                 if error_code in ("NoSuchKey", "404"):
-                    logger.info(f"S3 key not found: {key}")
                     return self._memory_store.get(key)
                 logger.error(f"S3 ClientError getting {key}: {e}")
             except Exception as e:
@@ -82,7 +113,6 @@ class S3Service:
 
         if self.use_s3 and self.client:
             try:
-                logger.info(f"S3 LIST prefix: {prefix}")
                 paginator = self.client.get_paginator("list_objects_v2")
                 pages = paginator.paginate(Bucket=self.bucket, Prefix=prefix)
 
@@ -116,7 +146,6 @@ class S3Service:
             return True
 
         try:
-            logger.info(f"S3 DELETE key: {key}")
             self.client.delete_object(Bucket=self.bucket, Key=key)
             return True
         except Exception as e:

@@ -58,6 +58,11 @@ JSON schema to return:
 }"""
 
 
+def _has_valid_aws_credentials() -> bool:
+    """Return True only when explicit AWS credentials are configured."""
+    return bool(settings.AWS_ACCESS_KEY_ID and settings.AWS_SECRET_ACCESS_KEY)
+
+
 class BedrockService:
     """Bedrock AI extraction and summary service with deterministic fallback & AWS Lambda integration."""
 
@@ -67,24 +72,32 @@ class BedrockService:
         self.use_bedrock = False
         self.use_lambda = settings.USE_LAMBDA_AI
 
-        # Initialize boto3 Bedrock runtime client if credentials are configured
-        try:
-            kwargs = {"region_name": settings.AWS_REGION}
-            if settings.AWS_ACCESS_KEY_ID and settings.AWS_SECRET_ACCESS_KEY:
-                kwargs["aws_access_key_id"] = settings.AWS_ACCESS_KEY_ID
-                kwargs["aws_secret_access_key"] = settings.AWS_SECRET_ACCESS_KEY
+        if not _has_valid_aws_credentials():
+            logger.info(
+                "No explicit AWS credentials configured. "
+                "Bedrock/Lambda AI disabled — using deterministic fallback engine. "
+                "Set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in .env to enable AI features."
+            )
+            return
 
+        try:
+            kwargs = {
+                "region_name": settings.AWS_REGION,
+                "aws_access_key_id": settings.AWS_ACCESS_KEY_ID,
+                "aws_secret_access_key": settings.AWS_SECRET_ACCESS_KEY,
+            }
             if settings.BEDROCK_MODEL_ID:
                 self.bedrock_client = boto3.client("bedrock-runtime", **kwargs)
                 self.use_bedrock = True
-                logger.info(f"Initialized Bedrock runtime client with model: {settings.BEDROCK_MODEL_ID}")
+                logger.info(f"Bedrock AI enabled — model: {settings.BEDROCK_MODEL_ID}")
 
             if self.use_lambda and settings.CARE_AI_LAMBDA_NAME:
                 self.lambda_client = boto3.client("lambda", **kwargs)
-                logger.info(f"Initialized Lambda client for AI: {settings.CARE_AI_LAMBDA_NAME}")
+                logger.info(f"Lambda AI enabled — function: {settings.CARE_AI_LAMBDA_NAME}")
         except Exception as e:
-            logger.warning(f"AWS Bedrock/Lambda client init skipped or failed: {e}. Using fallback AI engine.")
+            logger.warning(f"AWS Bedrock/Lambda client init failed: {e}. Using deterministic fallback.")
             self.use_bedrock = False
+            self.lambda_client = None
 
     def extract_care_update(self, text: str, family_id: str = "demo-family") -> ExtractionResult:
         """Extract structured information from care text using Bedrock, Lambda, or Fallback."""

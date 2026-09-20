@@ -1,10 +1,27 @@
 {
-  "framework": "vite",
+  "installCommand": "npm install --legacy-peer-deps",
   "buildCommand": "npm run build",
   "outputDirectory": "dist/public",
+  "framework": null,
   "rewrites": [
     {
-      "source": "/((?!assets|favicon|.*\\.[a-zA-Z0-9]+$).*)",
+      "source": "/api/:path*",
+      "destination": "https://carecircle-api-i870.onrender.com/api/:path*"
+    },
+    {
+      "source": "/health",
+      "destination": "https://carecircle-api-i870.onrender.com/health"
+    },
+    {
+      "source": "/docs",
+      "destination": "https://carecircle-api-i870.onrender.com/docs"
+    },
+    {
+      "source": "/openapi.json",
+      "destination": "https://carecircle-api-i870.onrender.com/openapi.json"
+    },
+    {
+      "source": "/(.*)",
       "destination": "/index.html"
     }
   ]
