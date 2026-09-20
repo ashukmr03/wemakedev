@@ -6,7 +6,10 @@ import { defineConfig } from "vite";
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   define: {
-    "import.meta.env.NEXT_PUBLIC_API_URL": JSON.stringify(process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"),
+    // Support both VITE_API_URL (preferred) and NEXT_PUBLIC_API_URL for Vercel compatibility.
+    // Leaving blank when unset so the frontend correctly falls back to mock data.
+    "import.meta.env.VITE_API_URL": JSON.stringify(process.env.VITE_API_URL || ""),
+    "import.meta.env.NEXT_PUBLIC_API_URL": JSON.stringify(process.env.NEXT_PUBLIC_API_URL || ""),
     "import.meta.env.NEXT_PUBLIC_USE_MOCK_DATA": JSON.stringify(process.env.NEXT_PUBLIC_USE_MOCK_DATA || "false"),
   },
   resolve: {
