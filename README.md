@@ -1,4 +1,4 @@
-# CareCircle API — Mobile-First Eldercare Coordination Backend
+# CareCircle AI— Mobile-First Eldercare Coordination Backend
 
 CareCircle is a FastAPI backend for eldercare coordination, enabling families to record care updates, extract structured information using Amazon Bedrock, manage tasks, track appointments, and view daily summaries.
 
